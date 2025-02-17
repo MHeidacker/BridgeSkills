@@ -88,11 +88,6 @@ export function JobRecommendations({ recommendations, marketInsights, location }
                 </div>
               </CardContent>
             </Card>
-
-            {/* Job Search Results */}
-            <div className="pl-4 border-l-2 border-gray-100">
-              <JobSearchResults role={job} location={location} />
-            </div>
           </div>
         ))}
       </div>

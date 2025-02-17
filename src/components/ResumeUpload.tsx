@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Upload, FileText, AlertCircle } from 'lucide-react'
+import { Upload, FileText, AlertCircle, Loader2 } from 'lucide-react'
 import { ExtractedData } from '@/lib/types'
 
 interface ResumeUploadProps {
@@ -13,6 +13,7 @@ export function ResumeUpload({ onDataExtracted, className = '' }: ResumeUploadPr
   const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [uploadProgress, setUploadProgress] = useState<string>('')
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
@@ -41,8 +42,26 @@ export function ResumeUpload({ onDataExtracted, className = '' }: ResumeUploadPr
   const uploadFile = async (file: File) => {
     setIsUploading(true)
     setError(null)
+    setUploadProgress('Reading file...')
 
     try {
+      // Validate file size (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error('File size too large. Please upload a file smaller than 5MB.')
+      }
+
+      // Validate file type
+      const allowedTypes = [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      ]
+      if (!allowedTypes.includes(file.type)) {
+        throw new Error('Invalid file type. Please upload a PDF or Word document.')
+      }
+
+      setUploadProgress('Analyzing resume...')
+
       const formData = new FormData()
       formData.append('resume', file)
 
@@ -58,6 +77,7 @@ export function ResumeUpload({ onDataExtracted, className = '' }: ResumeUploadPr
       }
 
       if (result.success && result.data) {
+        setUploadProgress('Resume analyzed successfully!')
         onDataExtracted(result.data)
       } else {
         throw new Error('No data extracted from resume')
@@ -66,6 +86,8 @@ export function ResumeUpload({ onDataExtracted, className = '' }: ResumeUploadPr
       setError(error instanceof Error ? error.message : 'Failed to upload resume')
     } finally {
       setIsUploading(false)
+      // Clear progress after a delay
+      setTimeout(() => setUploadProgress(''), 3000)
     }
   }
 
@@ -89,22 +111,25 @@ export function ResumeUpload({ onDataExtracted, className = '' }: ResumeUploadPr
           disabled={isUploading}
         />
         <div className="text-center">
-          <Upload className="mx-auto h-12 w-12 text-gray-400" />
-          <div className="mt-4">
-            <p className="text-sm text-gray-600">
-              {isUploading ? (
-                'Uploading...'
-              ) : (
-                <>
+          {isUploading ? (
+            <div className="flex flex-col items-center">
+              <Loader2 className="h-12 w-12 text-primary-600 animate-spin" />
+              <p className="mt-4 text-sm text-gray-600">{uploadProgress}</p>
+            </div>
+          ) : (
+            <>
+              <Upload className="mx-auto h-12 w-12 text-gray-400" />
+              <div className="mt-4">
+                <p className="text-sm text-gray-600">
                   <span className="font-semibold text-primary-600">
                     Click to upload
                   </span>{' '}
                   or drag and drop
-                </>
-              )}
-            </p>
-            <p className="mt-1 text-xs text-gray-500">PDF or Word Document</p>
-          </div>
+                </p>
+                <p className="mt-1 text-xs text-gray-500">PDF or Word Document (max 5MB)</p>
+              </div>
+            </>
+          )}
         </div>
         {error && (
           <div className="mt-4 flex items-center gap-2 text-red-600 text-sm">

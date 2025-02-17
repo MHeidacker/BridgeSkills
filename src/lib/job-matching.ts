@@ -77,117 +77,140 @@ interface CivilianEquivalent {
   keywords: string[]
 }
 
+interface AIJobRecommendation {
+  title: string
+  matchPercentages: {
+    skillMatch: number
+    experienceMatch: number
+    mosMatch: number
+    overallMatch: number
+  }
+  reasonForMatch: string
+  requiredSkills: string[]
+  suggestedIndustries: string[]
+}
+
 export async function calculateJobMatches(data: ExtractedData): Promise<JobRecommendation[]> {
   try {
-    // First, translate military experience to civilian equivalents
-    const civilianEquivalents = await translateMilitaryToCivilian(data)
+    // Get AI recommendations with match percentages
+    const aiRecommendations = await getAIRecommendations(data)
     
-    // Create search queries for each potential role
-    const searchPromises = civilianEquivalents.roles.map(async (role) => {
-      const baseRecommendation: JobRecommendation = {
-        id: `job-${Date.now()}-${role}`,
-        title: role,
-        description: 'Civilian equivalent role',
-        salaryRange: 'Competitive',
-        requiredSkills: civilianEquivalents.skills,
-        demandTrend: 'Growing',
-        industries: civilianEquivalents.industries,
-        matchReason: 'Based on military experience translation',
-        matchScore: 0,
-        matchDetails: {
-          skillMatch: 0,
-          experienceMatch: 0,
-          mosMatch: 0
-        }
-      }
-
-      // Pass the search keywords to the job scraper
-      return jobScraperService.searchJobs(baseRecommendation, data, civilianEquivalents.keywords)
-    })
-
-    // Get all job results
-    const allJobResults = await Promise.all(searchPromises)
-    const scrapedJobs = allJobResults.flat()
-
-    // Convert scraped jobs to recommendations with enhanced matching
-    const recommendations: JobRecommendation[] = scrapedJobs.map(job => ({
-      id: job.id,
-      title: job.title,
-      description: job.description,
-      salaryRange: job.salary || 'Competitive',
-      requiredSkills: job.skills || [],
+    // Convert AI recommendations directly to JobRecommendation format
+    const recommendations: JobRecommendation[] = aiRecommendations.map((rec) => ({
+      id: `job-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      title: rec.title,
+      description: rec.reasonForMatch,
+      salaryRange: 'Competitive',
+      requiredSkills: rec.requiredSkills,
       demandTrend: 'Growing',
-      industries: determineIndustries(job, civilianEquivalents.industries),
-      matchReason: generateMatchReason(job, data, civilianEquivalents),
-      matchScore: calculateMatchScore(job, data, civilianEquivalents),
+      industries: rec.suggestedIndustries,
+      matchReason: rec.reasonForMatch,
+      matchScore: rec.matchPercentages.overallMatch,
       matchDetails: {
-        skillMatch: calculateSkillMatch(job, data, civilianEquivalents),
-        experienceMatch: calculateExperienceMatch(job, data),
-        mosMatch: calculateMOSMatch(job, data, civilianEquivalents)
+        skillMatch: rec.matchPercentages.skillMatch,
+        experienceMatch: rec.matchPercentages.experienceMatch,
+        mosMatch: rec.matchPercentages.mosMatch
       }
     }))
 
-    // Remove duplicates and sort by match score
-    const uniqueRecommendations = removeDuplicateJobs(recommendations)
-    return uniqueRecommendations
-      .sort((a, b) => b.matchScore - a.matchScore)
-      .slice(0, 5)
+    // Sort by match score and remove duplicates
+    const uniqueRecommendations = recommendations.reduce((acc, current) => {
+      const x = acc.find(item => item.title === current.title)
+      if (!x) {
+        return acc.concat([current])
+      } else {
+        return acc
+      }
+    }, [] as JobRecommendation[])
+
+    return uniqueRecommendations.sort((a, b) => b.matchScore - a.matchScore)
   } catch (error) {
     console.error('Error calculating job matches:', error)
-    return []
+    throw error // Let the API route handle the error
   }
 }
 
-async function translateMilitaryToCivilian(data: ExtractedData): Promise<CivilianEquivalent> {
-  try {
-    const prompt = `
-      Given the following military experience, provide civilian equivalents:
-      MOS/AFSC: ${data.militaryInfo.mos || 'Not specified'}
-      Branch: ${data.militaryInfo.branch || 'Not specified'}
-      Skills: ${data.skills.join(', ')}
-      Experience: ${data.experience.map(e => e.description).join('; ')}
+async function getAIRecommendations(data: ExtractedData): Promise<AIJobRecommendation[]> {
+  if (!data.militaryInfo?.mos) {
+    return []
+  }
 
-      Please provide:
-      1. Equivalent civilian job titles (focus on technology, cybersecurity, and management roles)
-      2. Equivalent civilian skills
-      3. Relevant civilian industries
-      4. Key search terms for job matching
+  const prompt = `
+    Based on the following military background, provide job recommendations:
+    Rank: ${data.militaryInfo?.rank || 'Not specified'}
+    Branch: ${data.militaryInfo?.branch || 'Not specified'}
+    MOS/AFSC: ${data.militaryInfo?.mos || 'Not specified'}
+    Skills: ${data.skills.join(', ') || 'None provided'}
+    Experience: ${data.experience.map(e => `${e.title} (${e.duration})`).join(', ') || 'None provided'}
+    Education: ${data.education.join(', ') || 'None provided'}
 
-      Format the response as JSON with the following structure:
+    Provide recommendations in this JSON format:
+    [
       {
-        "roles": ["role1", "role2", ...],
-        "skills": ["skill1", "skill2", ...],
-        "industries": ["industry1", "industry2", ...],
-        "keywords": ["keyword1", "keyword2", ...]
+        "title": "Job Title",
+        "matchPercentages": {
+          "skillMatch": 85,
+          "experienceMatch": 70,
+          "mosMatch": 90,
+          "overallMatch": 82
+        },
+        "reasonForMatch": "Detailed explanation of why this job is a good match",
+        "requiredSkills": ["skill1", "skill2", "skill3"],
+        "suggestedIndustries": ["industry1", "industry2"]
       }
-    `
+    ]
+  `
 
+  try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview",
+      model: "gpt-4o",
       messages: [
         {
           role: "system",
-          content: "You are an expert in military to civilian career translation. Focus on technology, cybersecurity, and management roles."
+          content: "You are an expert in military to civilian career translation, specializing in technology, cybersecurity, and management roles. Provide detailed, accurate job recommendations with realistic match percentages."
         },
         {
           role: "user",
           content: prompt
         }
-      ],
-      response_format: { type: "json_object" }
+      ]
     })
 
-    return JSON.parse(completion.choices[0].message.content) as CivilianEquivalent
-  } catch (error) {
-    console.error('Error translating military experience:', error)
-    // Provide fallback civilian equivalents if AI translation fails
-    return {
-      roles: ['Project Manager', 'Technical Program Manager', 'Cybersecurity Analyst'],
-      skills: data.skills,
-      industries: ['Technology', 'Cybersecurity', 'Consulting'],
-      keywords: ['technical', 'management', 'security']
+    if (!completion.choices[0].message.content) {
+      return []
     }
+
+    try {
+      // Clean the response of any markdown formatting
+      let content = completion.choices[0].message.content
+      content = content.replace(/```json\n?/, '').replace(/```\n?$/, '').trim()
+      
+      const parsedResponse = JSON.parse(content)
+      if (Array.isArray(parsedResponse)) {
+        return parsedResponse as AIJobRecommendation[]
+      } else if (parsedResponse.recommendations && Array.isArray(parsedResponse.recommendations)) {
+        return parsedResponse.recommendations as AIJobRecommendation[]
+      } else {
+        return []
+      }
+    } catch (parseError) {
+      console.error('Error parsing OpenAI response:', parseError)
+      return []
+    }
+  } catch (error) {
+    console.error('Error getting AI recommendations:', error)
+    return []
   }
+}
+
+function removeDuplicateJobs(jobs: JobRecommendation[]): JobRecommendation[] {
+  const seen = new Set<string>()
+  return jobs.filter(job => {
+    const key = `${job.title}-${job.description}`.toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function determineIndustries(job: ScrapedJob, civilianIndustries: string[]): string[] {
@@ -276,16 +299,6 @@ function calculateRoleMatch(job: ScrapedJob, civilian: CivilianEquivalent): numb
     jobText.includes(role.toLowerCase())
   )
   return matchedRoles.length > 0 ? 1 : 0
-}
-
-function removeDuplicateJobs(jobs: JobRecommendation[]): JobRecommendation[] {
-  const seen = new Set<string>()
-  return jobs.filter(job => {
-    const key = `${job.title}-${job.description}`.toLowerCase()
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
 }
 
 function extractSkillsFromDescription(description: string): string[] {
@@ -383,4 +396,11 @@ function calculateTotalPossibleSkillScore(role: EnhancedJobRole): number {
 function parseYearsFromDuration(duration: string): number {
   const match = duration.match(/(\d+)\s*years?/)
   return match ? parseInt(match[1], 10) : 0
+}
+
+function generateFallbackRecommendations(data: ExtractedData): AIJobRecommendation[] {
+  // Implementation of generateFallbackRecommendations function
+  // This function should return an array of AIJobRecommendation objects
+  // based on the fallback logic for when the main AI recommendation fails
+  return []
 } 

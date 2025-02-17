@@ -1,34 +1,34 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Loader2, Building2, MapPin, Calendar, ExternalLink, Filter } from 'lucide-react'
+import { Loader2, Building2, MapPin } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { ScrapedJob } from '@/lib/services/job-scraper'
-import { JobRecommendation } from '@/lib/types'
+import { JobRecommendation, ExtractedData, RecommendationResponse } from '@/lib/types'
 
 interface JobSearchResultsProps {
-  role: JobRecommendation
-  location?: string
+  militaryInfo: ExtractedData['militaryInfo']
+  skills: ExtractedData['skills']
+  experience: ExtractedData['experience']
+  education: ExtractedData['education']
 }
 
-export function JobSearchResults({ role, location }: JobSearchResultsProps) {
-  const [jobs, setJobs] = useState<ScrapedJob[]>([])
-  const [loading, setLoading] = useState(true)
+export function JobSearchResults({ 
+  militaryInfo,
+  skills,
+  experience,
+  education 
+}: JobSearchResultsProps) {
+  const [recommendations, setRecommendations] = useState<JobRecommendation[]>([])
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [filters, setFilters] = useState({
-    source: 'all',
-    datePosted: 'all',
-    experienceLevel: 'all'
-  })
 
   useEffect(() => {
-    async function fetchJobs() {
+    async function fetchRecommendations() {
       try {
         setLoading(true)
         setError(null)
+        setRecommendations([]) // Clear previous recommendations while loading
 
         const response = await fetch('/api/jobs/search', {
           method: 'POST',
@@ -36,55 +36,39 @@ export function JobSearchResults({ role, location }: JobSearchResultsProps) {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            roleId: role.id,
-            location,
-            filters
-          })
+            militaryInfo,
+            skills,
+            experience,
+            education
+          } as ExtractedData)
         })
 
         if (!response.ok) {
-          throw new Error('Failed to fetch job listings')
+          throw new Error('Failed to fetch job recommendations')
         }
 
-        const data = await response.json()
-        setJobs(data.jobs)
+        const data: RecommendationResponse = await response.json()
+        console.log('API Response:', data)
+        setRecommendations(data.recommendations || [])
       } catch (error) {
-        console.error('Error fetching jobs:', error)
-        setError('Failed to load job listings. Please try again later.')
+        console.error('Error fetching recommendations:', error)
+        setError('Failed to load job recommendations. Please try again later.')
       } finally {
         setLoading(false)
       }
     }
 
-    fetchJobs()
-  }, [role.id, location, filters])
-
-  const filteredJobs = jobs.filter(job => {
-    if (filters.source !== 'all' && job.source !== filters.source) return false
-    
-    if (filters.datePosted !== 'all') {
-      const daysAgo = Math.floor((Date.now() - new Date(job.postedDate).getTime()) / (1000 * 60 * 60 * 24))
-      switch (filters.datePosted) {
-        case 'today':
-          if (daysAgo > 1) return false
-          break
-        case 'week':
-          if (daysAgo > 7) return false
-          break
-        case 'month':
-          if (daysAgo > 30) return false
-          break
-      }
+    if (militaryInfo && skills && experience && education) {
+      fetchRecommendations()
     }
-
-    return true
-  })
+  }, [militaryInfo, skills, experience, education])
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center p-8">
-        <Loader2 className="w-6 h-6 animate-spin text-primary-600" />
-        <span className="ml-2">Searching job listings...</span>
+      <div className="p-8 text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary-600 mx-auto mb-4"></div>
+        <p className="text-lg text-gray-700">Analyzing your background...</p>
+        <p className="text-sm text-gray-500">This may take a few moments</p>
       </div>
     )
   }
@@ -97,120 +81,84 @@ export function JobSearchResults({ role, location }: JobSearchResultsProps) {
     )
   }
 
+  if (!loading && recommendations.length === 0) {
+    return (
+      <div className="p-8 text-center text-gray-500 bg-gray-50 rounded-lg">
+        No job recommendations found. Please try adjusting your search criteria.
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h3 className="text-xl font-semibold">
-          Job Listings ({filteredJobs.length})
+          Job Recommendations ({recommendations.length})
         </h3>
-
-        <div className="flex gap-4">
-          <Select
-            value={filters.source}
-            onValueChange={(value) => setFilters(prev => ({ ...prev, source: value }))}
-          >
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Filter by source" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Sources</SelectItem>
-              <SelectItem value="LinkedIn">LinkedIn</SelectItem>
-              <SelectItem value="Indeed">Indeed</SelectItem>
-              <SelectItem value="HireVeterans">HireVeterans</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={filters.datePosted}
-            onValueChange={(value) => setFilters(prev => ({ ...prev, datePosted: value }))}
-          >
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Date posted" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Any time</SelectItem>
-              <SelectItem value="today">Last 24 hours</SelectItem>
-              <SelectItem value="week">Last 7 days</SelectItem>
-              <SelectItem value="month">Last 30 days</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
       </div>
 
       <div className="grid gap-4">
-        {filteredJobs.map(job => (
-          <a
-            key={`${job.source}-${job.id}`}
-            href={job.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block group"
-          >
-            <Card className="hover:border-primary-200 hover:shadow-md transition-all duration-200">
-              <CardHeader className="pb-2">
-                <div className="flex justify-between items-start">
+        {recommendations.map(job => (
+          <Card key={job.id} className="hover:border-primary-200 hover:shadow-md transition-all duration-200">
+            <CardHeader className="pb-2">
+              <div className="flex justify-between items-start">
+                <div>
+                  <CardTitle className="text-lg group-hover:text-primary-600 transition-colors">
+                    {job.title}
+                  </CardTitle>
+                  <div className="flex items-center gap-4 mt-1 text-gray-600 text-sm">
+                    <span className="flex items-center">
+                      <Building2 className="w-4 h-4 mr-1" />
+                      {job.industries.join(', ')}
+                    </span>
+                    <span className="flex items-center">
+                      <MapPin className="w-4 h-4 mr-1" />
+                      Salary Range: {job.salaryRange}
+                    </span>
+                  </div>
+                </div>
+                <Badge variant="secondary">
+                  Match: {Math.round(job.matchScore)}%
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <p className="text-gray-700 mb-4">
+                {job.description}
+              </p>
+
+              {job.requiredSkills && job.requiredSkills.length > 0 && (
+                <div className="mb-4">
+                  <div className="flex flex-wrap gap-2">
+                    {job.requiredSkills.map(skill => (
+                      <Badge key={skill} variant="secondary">
+                        {skill}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-4">
+                <h4 className="font-semibold mb-2">Match Details:</h4>
+                <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <CardTitle className="text-lg group-hover:text-primary-600 transition-colors">
-                      {job.title}
-                    </CardTitle>
-                    <div className="flex items-center gap-4 mt-1 text-gray-600 text-sm">
-                      <span className="flex items-center">
-                        <Building2 className="w-4 h-4 mr-1" />
-                        {job.company}
-                      </span>
-                      <span className="flex items-center">
-                        <MapPin className="w-4 h-4 mr-1" />
-                        {job.location}
-                      </span>
-                      <span className="flex items-center">
-                        <Calendar className="w-4 h-4 mr-1" />
-                        {new Date(job.postedDate).toLocaleDateString()}
-                      </span>
-                    </div>
+                    <div className="text-sm text-gray-600">Skills Match</div>
+                    <div className="font-medium">{Math.round(job.matchDetails.skillMatch)}%</div>
                   </div>
-                  <Badge>{job.source}</Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-gray-700 mb-4 line-clamp-3">
-                  {job.description}
-                </p>
-
-                {job.skills && job.skills.length > 0 && (
-                  <div className="mb-4">
-                    <div className="flex flex-wrap gap-2">
-                      {job.skills.map(skill => (
-                        <Badge key={skill} variant="secondary">
-                          {skill}
-                        </Badge>
-                      ))}
-                    </div>
+                  <div>
+                    <div className="text-sm text-gray-600">Experience Match</div>
+                    <div className="font-medium">{Math.round(job.matchDetails.experienceMatch)}%</div>
                   </div>
-                )}
-
-                <div className="flex justify-end">
-                  <Button
-                    variant="outline"
-                    onClick={(e) => {
-                      e.preventDefault(); // Prevent the parent link from triggering
-                      window.open(job.url, '_blank');
-                    }}
-                    className="inline-flex items-center"
-                  >
-                    View Job
-                    <ExternalLink className="w-4 h-4 ml-2" />
-                  </Button>
+                  <div>
+                    <div className="text-sm text-gray-600">MOS Match</div>
+                    <div className="font-medium">{Math.round(job.matchDetails.mosMatch)}%</div>
+                  </div>
                 </div>
-              </CardContent>
-            </Card>
-          </a>
+              </div>
+            </CardContent>
+          </Card>
         ))}
-
-        {filteredJobs.length === 0 && (
-          <div className="p-8 text-center text-gray-500 bg-gray-50 rounded-lg">
-            No job listings found matching your criteria. Try adjusting your filters or location.
-          </div>
-        )}
       </div>
     </div>
   )

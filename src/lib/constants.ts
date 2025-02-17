@@ -27,10 +27,17 @@ export const MILITARY_BRANCHES = [
   'Space Force',
 ] as const
 
+export type MilitaryBranch = 'Air Force' | 'Army' | 'Navy' | 'Marine Corps' | 'Space Force'
+export type MilitaryCode = {
+  code: string
+  title: string
+  branch: MilitaryBranch
+}
+
 // Common Cyber, Intelligence, and Technical AFSCs/MOSs
-export const MILITARY_CODES = [
+export const MILITARY_CODES: Array<MilitaryCode> = [
   // Air Force
-  { code: '17S', title: 'Cyber Warfare Operations Officer', branch: 'Air Force' },
+  { code: '17S_AF', title: 'Cyber Warfare Operations Officer', branch: 'Air Force' },
   { code: '1B4', title: 'Cyber Warfare Operations', branch: 'Air Force' },
   { code: '3D0', title: 'Cyberspace Operations', branch: 'Air Force' },
   { code: '14N', title: 'Intelligence Officer', branch: 'Air Force' },
@@ -60,9 +67,16 @@ export const MILITARY_CODES = [
   { code: '0202', title: 'Intelligence Officer', branch: 'Marine Corps' },
   
   // Space Force
-  { code: '17S', title: 'Cyber Warfare Operations Officer', branch: 'Space Force' },
+  { code: '17S_SF', title: 'Cyber Warfare Operations Officer', branch: 'Space Force' },
   { code: '5C0', title: 'Cyber Operations Specialist', branch: 'Space Force' },
   { code: '5I0', title: 'Intelligence Officer', branch: 'Space Force' },
+  
+  // Marine Corps
+  { code: '0671', title: 'Data Systems Administrator', branch: 'Marine Corps' },
+  { code: '0689', title: 'Cybersecurity Technician', branch: 'Marine Corps' },
+  
+  // Army
+  { code: '35N', title: 'Signals Intelligence Analyst', branch: 'Army' },
 ] as const
 
 export const COMMON_MILITARY_SKILLS = [
@@ -85,8 +99,6 @@ export const COMMON_MILITARY_SKILLS = [
 ] as const
 
 export type MilitaryRank = typeof MILITARY_RANKS[number]
-export type MilitaryBranch = typeof MILITARY_BRANCHES[number]
-export type MilitaryCode = typeof MILITARY_CODES[number]
 export type MilitarySkill = typeof COMMON_MILITARY_SKILLS[number]
 
 // Helper function to get rank description

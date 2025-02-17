@@ -22,16 +22,14 @@ export interface Experience {
 }
 
 export interface Education {
-  degree: string
-  institution: string
-  year?: string
-  field?: string
+  type: string
+  field: string
 }
 
 export interface ExtractedData {
   skills: MilitarySkill[]
   experience: Experience[]
-  education: string[] // TODO: Update to Education[] after implementing education form
+  education: Education[]
   militaryInfo: MilitaryInfo
 }
 

@@ -61,7 +61,7 @@ const JOB_SOURCES = [
   }
 ]
 
-class JobScraperService {
+export class JobScraperService {
   async searchJobs(
     baseRecommendation: JobRecommendation, 
     data: ExtractedData,

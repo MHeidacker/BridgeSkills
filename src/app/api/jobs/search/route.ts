@@ -1,33 +1,45 @@
 import { NextResponse } from 'next/server'
-import { JobScraperService } from '@/lib/services/job-scraper'
-import { JobRecommendation } from '@/lib/types'
-
-const jobScraperService = new JobScraperService()
+import { calculateJobMatches } from '@/lib/job-matching'
+import { ExtractedData, RecommendationResponse } from '@/lib/types'
 
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { role, location } = body
+    const data = body as ExtractedData
     
-    if (!role || typeof role !== 'object') {
+    if (!data || typeof data !== 'object') {
       return NextResponse.json(
-        { error: 'Invalid role data' },
+        { error: 'Invalid data format' },
+        { status: 400 }
+      )
+    }
+
+    // Validate required fields
+    if (!data.militaryInfo || !data.skills || !data.experience) {
+      return NextResponse.json(
+        { error: 'Missing required fields' },
         { status: 400 }
       )
     }
     
-    // Search for jobs using our scraping service
-    const jobs = await jobScraperService.searchJobs(role as JobRecommendation, location)
+    // Get job recommendations using AI
+    const recommendations = await calculateJobMatches(data)
     
-    return NextResponse.json({
-      jobs,
-      total: jobs.length,
-      sources: Array.from(new Set(jobs.map(job => job.source)))
-    })
+    const response: RecommendationResponse = {
+      recommendations,
+      marketInsights: {
+        industryGrowth: 'Growing',
+        topLocations: ['Remote', 'Washington DC', 'New York', 'San Francisco'],
+        keyTrends: ['Increasing demand for cybersecurity professionals', 'Remote work opportunities']
+      },
+      timestamp: new Date().toISOString()
+    }
+
+    return NextResponse.json(response)
   } catch (error) {
-    console.error('Error searching jobs:', error)
+    console.error('Error getting job recommendations:', error)
     return NextResponse.json(
-      { error: 'Failed to search job listings' },
+      { error: 'Failed to get job recommendations' },
       { status: 500 }
     )
   }

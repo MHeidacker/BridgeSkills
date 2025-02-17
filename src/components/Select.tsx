@@ -1,6 +1,7 @@
 'use client'
 
 import { ChevronDown } from 'lucide-react'
+import { useId } from 'react'
 
 interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
   label: string
@@ -9,13 +10,19 @@ interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
 }
 
 export function Select({ label, options, error, className = '', ...props }: SelectProps) {
+  const id = useId()
+  
   return (
     <div className="relative">
-      <label className="block text-sm font-medium text-gray-700 mb-1">
+      <label 
+        htmlFor={id}
+        className="block text-sm font-medium text-gray-700 mb-1"
+      >
         {label}
       </label>
       <div className="relative">
         <select
+          id={id}
           className={`
             w-full px-3 py-2 border rounded-md appearance-none
             focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors
