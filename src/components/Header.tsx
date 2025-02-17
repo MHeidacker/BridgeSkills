@@ -3,10 +3,10 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth-context'
-import { Menu, X, User } from 'lucide-react'
+import { Menu, X, User, Bookmark } from 'lucide-react'
 
 export function Header() {
-  const { user, signInWithGoogle, signOut } = useAuth()
+  const { user, signOut } = useAuth()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
 
   return (
@@ -35,6 +35,13 @@ export function Header() {
             {user ? (
               <>
                 <Link 
+                  href="/saved-matches"
+                  className="text-gray-600 hover:text-gray-900 transition-colors flex items-center"
+                >
+                  <Bookmark className="w-4 h-4 mr-1" />
+                  Saved Matches
+                </Link>
+                <Link 
                   href="/profile"
                   className="text-gray-600 hover:text-gray-900 transition-colors"
                 >
@@ -48,12 +55,12 @@ export function Header() {
                 </button>
               </>
             ) : (
-              <button
-                onClick={signInWithGoogle}
+              <Link
+                href="/auth/sign-in"
                 className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
               >
                 Sign In
-              </button>
+              </Link>
             )}
           </nav>
 
@@ -91,6 +98,14 @@ export function Header() {
               {user ? (
                 <>
                   <Link 
+                    href="/saved-matches"
+                    className="text-gray-600 hover:text-gray-900 transition-colors px-2 py-1 rounded-lg hover:bg-gray-100 flex items-center"
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    <Bookmark className="w-4 h-4 mr-2" />
+                    Saved Matches
+                  </Link>
+                  <Link 
                     href="/profile"
                     className="text-gray-600 hover:text-gray-900 transition-colors px-2 py-1 rounded-lg hover:bg-gray-100"
                     onClick={() => setIsMenuOpen(false)}
@@ -108,15 +123,13 @@ export function Header() {
                   </button>
                 </>
               ) : (
-                <button
-                  onClick={() => {
-                    signInWithGoogle()
-                    setIsMenuOpen(false)
-                  }}
+                <Link
+                  href="/auth/sign-in"
                   className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                  onClick={() => setIsMenuOpen(false)}
                 >
                   Sign In
-                </button>
+                </Link>
               )}
             </nav>
           </div>

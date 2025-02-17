@@ -1,161 +1,114 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { ResumeUploadResponse, ExtractedData } from '@/lib/types'
-import { OpenAI } from 'openai'
-import { 
-  COMMON_MILITARY_SKILLS, 
-  MILITARY_RANKS, 
-  MILITARY_BRANCHES,
-  MILITARY_CODES 
-} from '@/lib/constants'
+import { ResumeUploadResponse } from '@/lib/types'
+import pdfParse from 'pdf-parse'
 
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+// Configure route options
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
+// Define allowed methods
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      'Allow': 'POST',
+      'Access-Control-Allow-Methods': 'POST',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Content-Type': 'application/json'
+    }
+  })
+}
 
 export async function POST(request: NextRequest): Promise<NextResponse<ResumeUploadResponse>> {
   try {
+    // Get the uploaded file
     const formData = await request.formData()
-    const file = formData.get('resume') as File
+    const file = formData.get('resume') as File | null
 
     if (!file) {
       return NextResponse.json(
-        { success: false, error: 'No file provided' },
+        { success: false, error: 'No file uploaded' },
         { status: 400 }
       )
     }
 
     // Validate file type
-    const allowedTypes = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
-    if (!allowedTypes.includes(file.type)) {
+    if (file.type !== 'application/pdf') {
       return NextResponse.json(
-        { success: false, error: 'Invalid file type. Please upload a PDF or Word document.' },
+        { success: false, error: 'Please upload a PDF document' },
         { status: 400 }
       )
     }
 
-    // Convert file to text
-    const text = await file.text()
-
-    // Reduce chunk size to handle token limits (approximately 6000 tokens per chunk)
-    const chunkSize = 15000 // Characters, not tokens, but a rough approximation
-    const chunks = []
-    for (let i = 0; i < text.length; i += chunkSize) {
-      chunks.push(text.slice(i, i + chunkSize))
+    // Validate file size (5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      return NextResponse.json(
+        { success: false, error: 'File size must be less than 5MB' },
+        { status: 400 }
+      )
     }
 
-    // Process each chunk and combine results
-    const results = []
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i]
+    // Convert file to buffer
+    const arrayBuffer = await file.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer)
+
+    // Parse PDF
+    try {
+      console.log('Starting PDF parsing...')
+      const pdfData = await pdfParse(buffer)
       
-      // Add delay between chunks to respect rate limits
-      if (i > 0) {
-        await new Promise(resolve => setTimeout(resolve, 20000)) // 20 second delay between chunks
+      console.log('PDF Metadata:', {
+        numpages: pdfData.numpages,
+        info: pdfData.info,
+        metadata: pdfData.metadata,
+        version: pdfData.version
+      })
+
+      const pdfText = pdfData.text
+      
+      // Log the extracted text
+      console.log('\n--- START OF EXTRACTED TEXT ---')
+      console.log(pdfText)
+      console.log('--- END OF EXTRACTED TEXT ---\n')
+      
+      console.log('Text Statistics:', {
+        totalLength: pdfText.length,
+        numberOfLines: pdfText.split('\n').length,
+        firstFewWords: pdfText.split(' ').slice(0, 10).join(' ') + '...'
+      })
+      
+      if (!pdfText || pdfText.trim().length === 0) {
+        console.error('No text content found in PDF')
+        return NextResponse.json(
+          { success: false, error: 'No text content found in PDF' },
+          { status: 400 }
+        )
       }
 
-      // Optimized prompt to reduce token usage
-      const prompt = `Extract military experience from this resume section. Use exact matches only:
-Ranks: ${MILITARY_RANKS.join(', ')}
-Branches: ${MILITARY_BRANCHES.join(', ')}
-Skills: ${COMMON_MILITARY_SKILLS.join(', ')}
-
-Return JSON:
-{
-  "skills": string[],
-  "experience": [{"title": string, "duration": string, "description?": string, "organization?": string}],
-  "education": [{"type": string, "field": string}],
-  "militaryInfo": {"rank?": string, "branch?": string, "mos?": string}
-}
-
-Resume text:
-${chunk}`
-
-      try {
-        const completion = await openai.chat.completions.create({
-          model: "gpt-4o",
-          messages: [
-            {
-              role: "system",
-              content: "You are an expert at analyzing military resumes. Extract only explicitly mentioned information, no inference."
-            },
-            {
-              role: "user",
-              content: prompt
-            }
-          ],
-          temperature: 0.1, // Reduced temperature for more consistent results
-        })
-
-        if (!completion.choices[0].message.content) {
-          console.warn('No content in OpenAI response for chunk ${i + 1}')
-          continue
+      // Return success with the extracted text
+      return NextResponse.json({
+        success: true,
+        data: {
+          text: pdfText,
+          metadata: {
+            pages: pdfData.numpages,
+            version: pdfData.version
+          }
         }
+      })
 
-        const extractedData = JSON.parse(completion.choices[0].message.content) as ExtractedData
-        results.push(extractedData)
-      } catch (error) {
-        console.error('Error processing chunk ${i + 1}:', error)
-        // Continue with other chunks even if one fails
-        continue
-      }
-    }
-
-    // If no results were processed successfully, throw an error
-    if (results.length === 0) {
-      throw new Error('Failed to process any parts of the resume')
+    } catch (error) {
+      console.error('PDF parsing error:', error)
+      return NextResponse.json(
+        { success: false, error: 'Failed to parse PDF file' },
+        { status: 400 }
+      )
     }
 
-    // Combine results from all chunks
-    const combinedData: ExtractedData = {
-      skills: [...new Set(results.flatMap(r => r.skills || []))],
-      experience: results.flatMap(r => r.experience || []),
-      education: results.flatMap(r => r.education || []),
-      militaryInfo: results.reduce((acc, curr) => ({
-        rank: acc.rank || curr.militaryInfo?.rank,
-        branch: acc.branch || curr.militaryInfo?.branch,
-        mos: acc.mos || curr.militaryInfo?.mos
-      }), {} as ExtractedData['militaryInfo'])
-    }
-
-    // Validate the combined data
-    if (!combinedData.skills || !Array.isArray(combinedData.skills)) {
-      throw new Error('Invalid skills data')
-    }
-    if (!combinedData.experience || !Array.isArray(combinedData.experience)) {
-      throw new Error('Invalid experience data')
-    }
-    if (!combinedData.education || !Array.isArray(combinedData.education)) {
-      throw new Error('Invalid education data')
-    }
-    if (!combinedData.militaryInfo || typeof combinedData.militaryInfo !== 'object') {
-      throw new Error('Invalid military info')
-    }
-
-    // Validate military info against constants
-    if (combinedData.militaryInfo.rank && !MILITARY_RANKS.includes(combinedData.militaryInfo.rank as any)) {
-      combinedData.militaryInfo.rank = undefined
-    }
-    if (combinedData.militaryInfo.branch && !MILITARY_BRANCHES.includes(combinedData.militaryInfo.branch as any)) {
-      combinedData.militaryInfo.branch = undefined
-    }
-    if (combinedData.militaryInfo.mos && !MILITARY_CODES.find(code => code.code === combinedData.militaryInfo.mos)) {
-      combinedData.militaryInfo.mos = undefined
-    }
-
-    // Filter skills to only include valid military skills
-    combinedData.skills = Array.from(new Set(combinedData.skills)).filter(skill => 
-      COMMON_MILITARY_SKILLS.includes(skill as any)
-    )
-
-    return NextResponse.json({
-      success: true,
-      data: combinedData
-    })
   } catch (error) {
-    console.error('Error processing resume:', error)
+    console.error('Server error:', error)
     return NextResponse.json(
-      { success: false, error: 'Failed to process resume' },
+      { success: false, error: 'Internal server error' },
       { status: 500 }
     )
   }

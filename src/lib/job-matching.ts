@@ -1,17 +1,16 @@
-import { ExtractedData, JobRecommendation } from '@/lib/types'
+import { ExtractedData, JobRecommendation } from './types'
 import { jobScraperService, ScrapedJob } from './services/job-scraper'
 import { MilitaryCode, MILITARY_CODES } from '@/lib/constants'
-import { OpenAI } from 'openai'
+import OpenAI from 'openai'
+import { SalaryDataService } from './services/salary-data'
 
-// Initialize OpenAI client with environment variable
-const apiKey = process.env.OPENAI_API_KEY
-if (!apiKey) {
-  throw new Error('OPENAI_API_KEY is not set in environment variables')
-}
-
+// Initialize OpenAI client
 const openai = new OpenAI({
-  apiKey
+  apiKey: process.env.OPENAI_API_KEY
 })
+
+// Initialize salary data service
+const salaryDataService = new SalaryDataService()
 
 interface SkillWeight {
   skill: string
@@ -77,89 +76,260 @@ interface CivilianEquivalent {
   keywords: string[]
 }
 
+// Define AI recommendation interface
 interface AIJobRecommendation {
   title: string
   matchPercentages: {
     skillMatch: number
     experienceMatch: number
     mosMatch: number
+    technicalMatch: number
     overallMatch: number
   }
   reasonForMatch: string
   requiredSkills: string[]
   suggestedIndustries: string[]
+  recommendedCertifications: string[]
+  careerProgression: string
+}
+
+function parseAIResponse(content: string): AIJobRecommendation[] {
+  try {
+    // Clean the response of any markdown formatting
+    content = content.replace(/```json\n?/, '').replace(/```\n?$/, '').trim()
+    
+    let parsedResponse
+    try {
+      parsedResponse = JSON.parse(content)
+    } catch {
+      // If JSON parsing fails, try to extract structured data using regex
+      const recommendations: AIJobRecommendation[] = []
+      const sections = content.split(/(?=Job Title:)/i)
+      
+      for (const section of sections) {
+        if (!section.trim()) continue
+        
+        const title = section.match(/Job Title:\s*(.+?)(?:\n|$)/i)?.[1]
+        const matchStr = section.match(/Match Percentages?:[\s\S]*?Overall:\s*(\d+)/i)?.[1]
+        const reason = section.match(/Reason for Match:\s*(.+?)(?:\n|$)/i)?.[1]
+        const skills = section.match(/Required Skills:\s*(.+?)(?:\n|$)/i)?.[1]?.split(/,\s*/)
+        const industries = section.match(/Suggested Industries:\s*(.+?)(?:\n|$)/i)?.[1]?.split(/,\s*/)
+        const certs = section.match(/Recommended Certifications:\s*(.+?)(?:\n|$)/i)?.[1]?.split(/,\s*/)
+        const progression = section.match(/Career Progression:\s*(.+?)(?:\n|$)/i)?.[1]
+
+        if (title) {
+          recommendations.push({
+            title: title.trim(),
+            matchPercentages: {
+              skillMatch: 80, // Default values if not specified
+              experienceMatch: 75,
+              mosMatch: 70,
+              technicalMatch: 75,
+              overallMatch: parseInt(matchStr || '75')
+            },
+            reasonForMatch: reason?.trim() || 'Based on skill and experience match',
+            requiredSkills: skills?.map(s => s.trim()) || [],
+            suggestedIndustries: industries?.map(i => i.trim()) || [],
+            recommendedCertifications: certs?.map(c => c.trim()) || [],
+            careerProgression: progression?.trim() || 'Standard industry progression path'
+          })
+        }
+      }
+      
+      return recommendations
+    }
+
+    if (Array.isArray(parsedResponse)) {
+      return parsedResponse as AIJobRecommendation[]
+    } else if (parsedResponse.recommendations && Array.isArray(parsedResponse.recommendations)) {
+      return parsedResponse.recommendations as AIJobRecommendation[]
+    }
+    
+    return []
+  } catch (error) {
+    console.error('Error parsing AI response:', error)
+    return []
+  }
+}
+
+async function convertToJobRecommendations(aiRecs: AIJobRecommendation[]): Promise<JobRecommendation[]> {
+  const recommendations = []
+  
+  for (const rec of aiRecs) {
+    try {
+      // Get salary data for the job title
+      const salaryData = await salaryDataService.getSalaryData(rec.title)
+      
+      recommendations.push({
+        id: `job-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        title: rec.title,
+        description: rec.reasonForMatch,
+        salaryRange: `$${salaryData.range.min.toLocaleString()} - $${salaryData.range.max.toLocaleString()}`,
+        salaryInsights: {
+          median: salaryData.range.median,
+          byExperience: salaryData.experience,
+          byLocation: salaryData.location,
+          byIndustry: salaryData.industry
+        },
+        requiredSkills: rec.requiredSkills,
+        demandTrend: rec.matchPercentages.overallMatch > 80 ? 'High' : rec.matchPercentages.overallMatch > 60 ? 'Medium' : 'Low',
+        industries: rec.suggestedIndustries,
+        matchReason: rec.reasonForMatch,
+        matchScore: rec.matchPercentages.overallMatch,
+        matchDetails: {
+          skillMatch: rec.matchPercentages.skillMatch,
+          experienceMatch: rec.matchPercentages.experienceMatch,
+          mosMatch: rec.matchPercentages.mosMatch,
+          technicalMatch: rec.matchPercentages.technicalMatch
+        },
+        recommendedCertifications: rec.recommendedCertifications,
+        careerProgression: rec.careerProgression
+      })
+    } catch (error) {
+      console.error('Error converting job recommendation:', error)
+      // Continue with next recommendation if one fails
+      continue
+    }
+  }
+  
+  return recommendations
 }
 
 export async function calculateJobMatches(data: ExtractedData): Promise<JobRecommendation[]> {
   try {
-    // Get AI recommendations with match percentages
     const aiRecommendations = await getAIRecommendations(data)
-    
-    // Convert AI recommendations directly to JobRecommendation format
-    const recommendations: JobRecommendation[] = aiRecommendations.map((rec) => ({
-      id: `job-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      title: rec.title,
-      description: rec.reasonForMatch,
-      salaryRange: 'Competitive',
-      requiredSkills: rec.requiredSkills,
-      demandTrend: 'Growing',
-      industries: rec.suggestedIndustries,
-      matchReason: rec.reasonForMatch,
-      matchScore: rec.matchPercentages.overallMatch,
-      matchDetails: {
-        skillMatch: rec.matchPercentages.skillMatch,
-        experienceMatch: rec.matchPercentages.experienceMatch,
-        mosMatch: rec.matchPercentages.mosMatch
-      }
-    }))
-
-    // Sort by match score and remove duplicates
-    const uniqueRecommendations = recommendations.reduce((acc, current) => {
-      const x = acc.find(item => item.title === current.title)
-      if (!x) {
-        return acc.concat([current])
-      } else {
-        return acc
-      }
-    }, [] as JobRecommendation[])
-
-    return uniqueRecommendations.sort((a, b) => b.matchScore - a.matchScore)
+    return convertToJobRecommendations(aiRecommendations)
   } catch (error) {
     console.error('Error calculating job matches:', error)
-    throw error // Let the API route handle the error
+    return []
   }
 }
 
-async function getAIRecommendations(data: ExtractedData): Promise<AIJobRecommendation[]> {
-  if (!data.militaryInfo?.mos) {
-    return []
-  }
+function generateResumePrompt(resumeText: string): string {
+  return `Analyze this military veteran's resume and provide diverse civilian career recommendations. Extract key information and consider both technical and non-technical roles that leverage their experience:
 
-  const prompt = `
-    Based on the following military background, provide job recommendations:
-    Rank: ${data.militaryInfo?.rank || 'Not specified'}
-    Branch: ${data.militaryInfo?.branch || 'Not specified'}
-    MOS/AFSC: ${data.militaryInfo?.mos || 'Not specified'}
-    Skills: ${data.skills.join(', ') || 'None provided'}
-    Experience: ${data.experience.map(e => `${e.title} (${e.duration})`).join(', ') || 'None provided'}
-    Education: ${data.education.join(', ') || 'None provided'}
+Resume Text:
+${resumeText}
 
-    Provide recommendations in this JSON format:
-    [
-      {
-        "title": "Job Title",
-        "matchPercentages": {
-          "skillMatch": 85,
-          "experienceMatch": 70,
-          "mosMatch": 90,
-          "overallMatch": 82
-        },
-        "reasonForMatch": "Detailed explanation of why this job is a good match",
-        "requiredSkills": ["skill1", "skill2", "skill3"],
-        "suggestedIndustries": ["industry1", "industry2"]
-      }
-    ]
-  `
+Consider these aspects in your analysis and recommendations:
+1. Military experience, rank, and responsibilities
+2. Leadership and management capabilities demonstrated
+3. Technical skills and proficiencies mentioned
+4. Project and program management experience
+5. Training and mentoring responsibilities
+6. Strategic planning and execution examples
+7. Cross-functional team coordination
+8. Risk management and decision-making instances
+9. Communication and interpersonal skills
+10. Problem-solving and analytical capabilities
+
+Look for opportunities in diverse sectors such as:
+- Technology and IT
+- Business Operations
+- Project/Program Management
+- Training and Development
+- Operations and Logistics
+- Consulting
+- Healthcare Administration
+- Financial Services
+- Government/Public Sector
+- Manufacturing and Supply Chain
+
+Provide your recommendations in the following JSON format:
+{
+  "recommendations": [
+    {
+      "title": "Job Title",
+      "matchPercentages": {
+        "skillMatch": number (0-100),
+        "experienceMatch": number (0-100),
+        "mosMatch": number (0-100),
+        "technicalMatch": number (0-100),
+        "overallMatch": number (0-100)
+      },
+      "reasonForMatch": "Detailed explanation of why this job matches",
+      "requiredSkills": ["skill1", "skill2", ...],
+      "suggestedIndustries": ["industry1", "industry2", ...],
+      "recommendedCertifications": ["cert1", "cert2", ...],
+      "careerProgression": "Description of career growth path"
+    }
+  ]
+}`
+}
+
+function generateManualPrompt(data: ExtractedData): string {
+  return `Analyze this military background and provide diverse civilian career recommendations. Consider both technical and non-technical roles that leverage their experience:
+
+Military Info: ${data.militaryInfo.rank || 'Not specified'} - ${data.militaryInfo.branch || 'Not specified'} - ${data.militaryInfo.mos || 'Not specified'}
+
+Skills: ${data.skills.join(', ') || 'None provided'}
+
+Experience: ${data.experience.map(e => 
+  `${e.title} at ${e.organization} (${e.startDate} to ${e.endDate || 'Present'}): ${e.description}`
+).join('\n') || 'None provided'}
+
+Education: ${data.education.map(e => 
+  `${e.type} in ${e.field} from ${e.institution} (${e.graduationDate})`
+).join('\n') || 'None provided'}
+
+Technical Skills: ${data.technicalSkills?.map(skill => 
+  `${skill.name} (${skill.proficiency}, ${skill.yearsOfExperience} years)`
+).join(', ') || 'None provided'}
+
+Certifications: ${data.certifications?.map(cert => 
+  `${cert.name} from ${cert.issuer} (${cert.isActive ? 'Active' : 'Inactive'})`
+).join(', ') || 'None provided'}
+
+Consider these aspects in your recommendations:
+1. Leadership and management capabilities
+2. Project and program management experience
+3. Training and mentoring abilities
+4. Strategic planning and execution
+5. Cross-functional team coordination
+6. Risk management and decision-making
+7. Technical expertise (if applicable)
+8. Communication and interpersonal skills
+9. Logistics and operations experience
+10. Problem-solving and analytical skills
+
+Look for opportunities in diverse sectors such as:
+- Technology and IT
+- Business Operations
+- Project/Program Management
+- Training and Development
+- Operations and Logistics
+- Consulting
+- Healthcare Administration
+- Financial Services
+- Government/Public Sector
+- Manufacturing and Supply Chain
+
+Provide your recommendations in the following JSON format:
+{
+  "recommendations": [
+    {
+      "title": "Job Title",
+      "matchPercentages": {
+        "skillMatch": number (0-100),
+        "experienceMatch": number (0-100),
+        "mosMatch": number (0-100),
+        "technicalMatch": number (0-100),
+        "overallMatch": number (0-100)
+      },
+      "reasonForMatch": "Detailed explanation of why this job matches",
+      "requiredSkills": ["skill1", "skill2", ...],
+      "suggestedIndustries": ["industry1", "industry2", ...],
+      "recommendedCertifications": ["cert1", "cert2", ...],
+      "careerProgression": "Description of career growth path"
+    }
+  ]
+}`
+}
+
+export async function getAIRecommendations(data: ExtractedData): Promise<AIJobRecommendation[]> {
+  const prompt = data.resumeText 
+    ? generateResumePrompt(data.resumeText)
+    : generateManualPrompt(data)
 
   try {
     const completion = await openai.chat.completions.create({
@@ -167,39 +337,38 @@ async function getAIRecommendations(data: ExtractedData): Promise<AIJobRecommend
       messages: [
         {
           role: "system",
-          content: "You are an expert in military to civilian career translation, specializing in technology, cybersecurity, and management roles. Provide detailed, accurate job recommendations with realistic match percentages."
+          content: "You are an expert career counselor specializing in military-to-civilian transitions. Your goal is to identify diverse career opportunities based on transferable skills, leadership experience, and adaptability. Consider both technical and non-technical roles across various industries. Look for opportunities where military experience provides unique value, such as project management, operations, logistics, leadership, training, and strategic planning. Don't limit recommendations to just cybersecurity or technical roles unless they are clearly the best fit."
         },
         {
           role: "user",
           content: prompt
         }
-      ]
+      ],
+      temperature: 0.7,
+      max_tokens: 2000,
+      response_format: { type: "json_object" }
     })
 
-    if (!completion.choices[0].message.content) {
-      return []
+    if (!completion.choices[0]?.message.content) {
+      throw new Error('No content in OpenAI response')
     }
 
-    try {
-      // Clean the response of any markdown formatting
-      let content = completion.choices[0].message.content
-      content = content.replace(/```json\n?/, '').replace(/```\n?$/, '').trim()
-      
-      const parsedResponse = JSON.parse(content)
-      if (Array.isArray(parsedResponse)) {
-        return parsedResponse as AIJobRecommendation[]
-      } else if (parsedResponse.recommendations && Array.isArray(parsedResponse.recommendations)) {
-        return parsedResponse.recommendations as AIJobRecommendation[]
-      } else {
-        return []
-      }
-    } catch (parseError) {
-      console.error('Error parsing OpenAI response:', parseError)
-      return []
+    const content = completion.choices[0]?.message?.content
+
+    if (!content) {
+      throw new Error('Empty response from OpenAI API')
     }
+
+    const recommendations = parseAIResponse(content)
+
+    if (!recommendations || recommendations.length === 0) {
+      return generateFallbackRecommendations(data)
+    }
+
+    return recommendations
   } catch (error) {
     console.error('Error getting AI recommendations:', error)
-    return []
+    return generateFallbackRecommendations(data)
   }
 }
 
@@ -265,13 +434,22 @@ function calculateSkillMatch(job: ScrapedJob, data: ExtractedData, civilian: Civ
 }
 
 function calculateExperienceMatch(job: ScrapedJob, data: ExtractedData): number {
-  // Simple experience match based on years
+  // Calculate total years of experience
   const userYears = data.experience.reduce((total, exp) => {
-    const years = parseInt(exp.duration) || 0
+    if (!exp.startDate) return total
+    
+    const start = new Date(exp.startDate)
+    const end = exp.endDate ? new Date(exp.endDate) : new Date()
+    const years = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24 * 365)
+    
     return total + years
   }, 0)
-  
-  return userYears >= 3 ? 1 : userYears / 3
+
+  // Simple scoring based on years of experience
+  if (userYears >= 5) return 1
+  if (userYears >= 3) return 0.8
+  if (userYears >= 1) return 0.6
+  return 0.4
 }
 
 function calculateMOSMatch(job: ScrapedJob, data: ExtractedData, civilian: CivilianEquivalent): number {
